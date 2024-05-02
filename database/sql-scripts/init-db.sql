@@ -1,26 +1,25 @@
 create sequence public.utilisateurs_idutilisateur_seq
     as integer;
-
 alter sequence public.utilisateurs_idutilisateur_seq owner to postgres;
+
+create sequence public.photo_idphoto_seq
+    as integer;
+alter sequence public.photo_idphoto_seq owner to postgres;
 
 create sequence public.avis_idavis_seq
     as integer;
-
 alter sequence public.avis_idavis_seq owner to postgres;
 
 create sequence public.message_idmessage_seq
     as integer;
-
 alter sequence public.message_idmessage_seq owner to postgres;
 
 create sequence public.trajet_idtrajet_seq
     as integer;
-
 alter sequence public.trajet_idtrajet_seq owner to postgres;
 
 create sequence public.estpassager_idestpassager_seq
     as integer;
-
 alter sequence public.estpassager_idestpassager_seq owner to postgres;
 
 create table if not exists public.utilisateurs
@@ -32,8 +31,10 @@ create table if not exists public.utilisateurs
     age           integer                                                             not null,
     username      varchar                                                             not null,
     numtel        varchar                                                             not null,
-    photoprofil   bytea,
-    securise      boolean                                                             not null,
+    photoprofil   varchar
+        constraint utilisateurs_photo_idphoto
+            references public.photo,
+    estadmin      boolean                                                             not null,
     motdepasse    varchar                                                             not null
 );
 
@@ -41,6 +42,18 @@ alter table public.utilisateurs
     owner to postgres;
 
 alter sequence public.utilisateurs_idutilisateur_seq owned by public.utilisateurs.idutilisateur;
+
+create table if not exists public.photo
+(
+    idphoto varchar default nextval('photo_idphoto_seq'::regClass) not null
+        primary key,
+    image   varchar
+)
+
+alter table public.photo
+    owner to postgres;
+
+alter sequence public.photo_idphoto_seq owned by public.photo.idphoto;
 
 create table if not exists public.voiture
 (

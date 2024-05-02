@@ -1,14 +1,15 @@
 import express from 'express';
-import pool from './database.js';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-const secretKey = 'votre_clé_secrète_ultra_mega_impossible_de_savoir_ce_que_ca_peut_etre';
+const prisma = new PrismaClient();
+const secretKey = process.env.SECRET_KEY;
 
 const router = express.Router();
-const saltRounds = 10; // Cout de traitement de hachage
+const saltRounds = 10; // Coût de traitement de hachage
 
-// Routeur POST pour se login à un utilisateur
+// Routeur POST pour se connecter à un utilisateur
 router.post('/login', async (req, res) => {
     const { username, motdepasse } = req.body;
     if (!username || !motdepasse) {
@@ -16,27 +17,22 @@ router.post('/login', async (req, res) => {
     }
 
     try {
-        // Recherchez l'utilisateur dans la base de données en fonction du nom d'utilisateur
-        const query = 'SELECT * FROM utilisateurs WHERE username = $1;';
-        const { rows } = await pool.query(query, [username]);
-        if (rows.length === 0) {
-            return res.status(401).send('Nom d\'utilisateur ou mot de passe incorrect haha');
+        const user = await prisma.utilisateur.findUnique({
+            where: { username }
+        });
+
+        if (!user) {
+            return res.status(401).send('Nom d\'utilisateur ou mot de passe incorrect');
         }
 
-        // Comparer le mot de passe hashé dans la base de données avec le mot de passe fourni
-        const user = rows[0];
         const motdepasseMatch = await bcrypt.compare(motdepasse, user.motdepasse);
         if (!motdepasseMatch) {
             return res.status(401).send('Nom d\'utilisateur ou mot de passe incorrect');
         }
 
-        // Générer un token JWT
-        const token = jwt.sign({ userId: user.idutilisateur, username: user.username }, secretKey, { expiresIn: '1h' });
+        const token = jwt.sign({ userId: user.idutilisateur }, secretKey, { expiresIn: '1h' });
 
-        // Stocker le token dans un cookie
         res.cookie('token', token, { httpOnly: true, secure: true });
-
-        // Renvoyer une réponse réussie
         res.status(200).send('Connexion réussie et token stocké dans un cookie');
     } catch (err) {
         console.error(err.message);
@@ -51,102 +47,240 @@ export function authenticateToken(req, res, next) {
 
     jwt.verify(token, secretKey, (err, user) => {
         if (err) return res.sendStatus(403);
-        req.user = user;
+        req.decoded = user; //je récupère les données stockés dans le token pour les analyser plus tard
         next();
     });
 }
 
-// Routeur GET pour récuperer tout les utilisateurs
-router.get('/', authenticateToken, async (req, res) => {
-    const query = 'SELECT * FROM utilisateurs;';
+// Middleware pour extraire et vérifier le token JWT du cookie
+const verifyTokenAndGetAdminStatus = async (req, res, next) => {
+    const token = req.cookies.token;
+    if (!token) {
+        return res.status(401).send('Token absent, authentification requise');
+    }
     try {
-        const { rows } = await pool.query(query);
-        res.status(200).json(rows);
+        const decoded = jwt.verify(token, secretKey);
+        const user = await prisma.utilisateur.findUnique({
+            where: { idutilisateur: decoded.userId },
+            select: { estadmin: true }
+        });
+        if (!user) {
+            return res.status(404).send('Utilisateur non trouvé');
+        }
+        req.userIsAdmin = user.estadmin;
+        next();
+    } catch (err) {
+        console.error(err);
+        if (err.name === 'JsonWebTokenError') {
+            return res.status(401).send('Token invalide');
+        }
+        res.status(500).send('Erreur serveur lors de la vérification du token');
+    }
+};
+
+// Routeur GET pour récupérer tous les utilisateurs avec leurs photos
+router.get('/', authenticateToken, async (req, res) => {
+    try {
+        const usersWithPhotos = await prisma.utilisateur.findMany({
+            include: {
+                photo: {
+                    select: {
+                        image: true
+                    }
+                }
+            }
+        });
+        res.status(200).json(usersWithPhotos);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Erreur lors de la récupération des utilisateurs');
     }
 });
 
-// Routeur GET pour récuperer l'utilisateur en fonction de l'id
-router.get('/:id', authenticateToken, async (req, res) => {
+// Routeur GET pour récupérer toutes les informations de l'utilisateur, à l'exception du mot de passe
+router.get('/:id/informations', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const query = 'SELECT * FROM utilisateurs WHERE idutilisateur = $1;';
     try {
-        const { rows } = await pool.query(query, [id]);
-        if (rows.length > 0) {
-            res.status(200).json(rows[0]);
+        const user = await prisma.utilisateur.findUnique({
+            where: { idutilisateur: parseInt(id) },
+            include: {
+                photo: {
+                    select: { image: true }
+                }
+            },
+            select: {
+                idutilisateur: true,
+                nom: true,
+                prenom: true,
+                age: true,
+                username: true,
+                numtel: true,
+                photo: {
+                    select: { image: true }
+                },
+                estadmin: true
+            }
+        });
+
+        if (!user) {
+            return res.status(404).send('Utilisateur non trouvé');
+        }
+        res.status(200).json(user);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Erreur lors de la récupération des informations de l\'utilisateur');
+    }
+});
+
+// Routeur GET pour récupérer toutes les informations de l'utilisateur, y compris le mot de passe, avec vérification de l'identifiant d'utilisateur dans le token JWT
+router.get('/:id/informationsWithPassword', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(id) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
+    try {
+        const user = await prisma.utilisateur.findUnique({
+            where: { idutilisateur: parseInt(id) },
+            include: {
+                photo: {
+                    select: { image: true }
+                }
+            }
+        });
+        if (user) {
+            res.status(200).json(user);
         } else {
             res.status(404).send('Utilisateur non trouvé');
         }
     } catch (err) {
         console.error(err.message);
-        res.status(500).send('Erreur lors de la récupération de l\'utilisateur');
+        res.status(500).send('Erreur lors de la récupération des informations de l\'utilisateur');
     }
 });
 
-// Routeur POST pour créer un utilisateur
-router.post('/', async (req, res) => {
-    const { nom, prenom, age, username, numtel, photoprofil, securise, motdepasse } = req.body;
-
-    // Vérifier si l'adresse email est déjà utilisée
+// Routeur PUT pour mettre à jour les informations d'un utilisateur et l'image dans la table Photo
+router.put('/:id', async (req, res) => {
+    const { id } = req.params;
+    const { nom, prenom, age, username, numtel, photoimage, motdepasse } = req.body;
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(id) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const emailCheckQuery = 'SELECT * FROM utilisateurs WHERE username = $1;';
-        const emailCheckResult = await pool.query(emailCheckQuery, [username]);
-        if (emailCheckResult.rows.length > 0) {
-            return res.status(409).send('L\'adresse email est déjà utilisée par un autre utilisateur.');
+        // Récupérer l'utilisateur pour obtenir l'ID de la photo associée
+        const user = await prisma.utilisateur.findUnique({
+            where: { idutilisateur: parseInt(id) },
+            include: {
+                photo: {
+                    select: {
+                        idphoto: true
+                    }
+                }
+            }
+        });
+        if (!user) {
+            return res.status(404).send('Utilisateur non trouvé');
         }
-
-        // Insérer le nouvel utilisateur si l'email n'est pas utilisé
-        const motdepassehash = await bcrypt.hash(motdepasse, saltRounds);
-        const query = `
-            INSERT INTO utilisateurs (nom, prenom, age, username, numtel, photoprofil, securise, motdepasse)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING *;
-        `;
-        const { rows } = await pool.query(query, [nom, prenom, age, username, numtel, photoprofil, securise, motdepassehash]);
-        res.status(201).json(rows[0]);
+        // Récupérer l'ID de la photo associée à l'utilisateur
+        const photoId = user.photo ? user.photo.idphoto : null;
+        // Mettre à jour l'image de la photo associée à l'utilisateur
+        const updatedPhoto = await prisma.photo.update({
+            where: { idphoto: photoId },
+            data: {
+                image: photoimage
+            }
+        });
+        // Mettre à jour les informations de l'utilisateur sauf photoprofil
+        const updatedUser = await prisma.utilisateur.update({
+            where: { idutilisateur: parseInt(id) },
+            data: {
+                nom,
+                prenom,
+                age,
+                username,
+                numtel,
+                motdepasse,
+                estadmin: false // Initialisation de estadmin à false
+            }
+        });
+        res.status(200).json(updatedUser);
     } catch (err) {
         console.error(err.message);
-        res.status(500).send('Erreur lors de la vérification ou de la création de l\'utilisateur');
+        res.status(500).send('Erreur lors de la mise à jour de l\'utilisateur et de l\'image');
     }
 });
 
 // Routeur DELETE pour supprimer un utilisateur
 router.delete('/:id', async (req, res) => {
     const { id } = req.params;
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(id) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const query = 'DELETE FROM utilisateurs WHERE idutilisateur = $1 RETURNING *;';
-        const { rows } = await pool.query(query, [id]);
-        if (rows.length === 0) {
+        // Récupération de l'utilisateur pour obtenir l'ID de la photo associée
+        const user = await prisma.utilisateur.findUnique({
+            where: { idutilisateur: parseInt(id) },
+            include: {
+                photo: {
+                    select: {
+                        idphoto: true
+                    }
+                }
+            }
+        });
+        if (!user) {
             return res.status(404).send('Utilisateur non trouvé');
+        }
+        // Suppression de l'utilisateur
+        await prisma.utilisateur.delete({
+            where: { idutilisateur: parseInt(id) }
+        });
+        // Si l'utilisateur a une photo associée, supprime également la photo
+        if (user.photo) {
+            await prisma.photo.delete({
+                where: { idphoto: user.photo.idphoto }
+            });
         }
         res.status(200).send('Utilisateur supprimé avec succès');
     } catch (err) {
+        if (err.code === 'P2025') {
+            return res.status(404).send('Utilisateur non trouvé');
+        }
         console.error(err.message);
         res.status(500).send('Erreur lors de la suppression de l\'utilisateur');
     }
 });
 
-// Routeur PUT pour update les informations d'un utilisateur
-router.put('/:id', async (req, res) => {
+// Route GET pour récupérer la valeur de estadmin en utilisant le middleware
+router.get('/my-admin-status', verifyTokenAndGetAdminStatus, (req, res) => {
+    res.status(200).send({ estadmin: req.userIsAdmin });
+});
+
+// Routeur PUT pour mettre à jour estadmin pour un utilisateur spécifique
+router.put('/:id/estadmin', verifyTokenAndGetAdminStatus, async (req, res) => {
     const { id } = req.params;
-    const { nom, prenom, age, username, numtel, photoprofil, securise, motdepasse } = req.body;
+    const { estadmin } = req.body;
+    const { tokenadmin } = req.userIsAdmin;
+    if (!tokenadmin) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const query = `
-            UPDATE utilisateurs 
-            SET nom = $1, prenom = $2, age = $3, username = $4, numtel = $5, photoprofil = $6, securise = $7, motdepasse = $8
-            WHERE idutilisateur = $9
-            RETURNING *;
-        `;
-        const { rows } = await pool.query(query, [nom, prenom, age, username, numtel, photoprofil, securise, motdepasse, id]);
-        if (rows.length === 0) {
-            return res.status(404).send('Utilisateur non trouvé');
+        const updatedUser = await prisma.utilisateur.update({
+            where: { idutilisateur: parseInt(id) },
+            data: {
+                estadmin
+            }
+        });
+        if (updatedUser) {
+            res.status(200).json(updatedUser);
+        } else {
+            res.status(404).send('Utilisateur non trouvé');
         }
-        res.status(200).json(rows[0]);
     } catch (err) {
         console.error(err.message);
-        res.status(500).send('Erreur lors de la mise à jour de l\'utilisateur');
+        res.status(500).send('Erreur lors de la mise à jour de estadmin pour l\'utilisateur');
     }
 });
 

@@ -1,15 +1,15 @@
 import express from 'express';
-import pool from './database.js'; // Assurez-vous que le chemin est correct
+import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
 
+const prisma = new PrismaClient();
 const router = express.Router();
 
 // Routeur GET général pour récupérer tous les messages
 router.get('/', authenticateToken, async (req, res) => {
-    const selectQuery = 'SELECT * FROM message;';
     try {
-        const { rows } = await pool.query(selectQuery);
-        res.status(200).json(rows);
+        const messages = await prisma.message.findMany();
+        res.status(200).json(messages);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Erreur lors de la récupération des messages');
@@ -19,11 +19,16 @@ router.get('/', authenticateToken, async (req, res) => {
 // Routeur GET pour récupérer des messages basés sur le destinataire
 router.get('/receveur/:receveur', authenticateToken, async (req, res) => {
     const { receveur } = req.params;
-    const selectQuery = 'SELECT * FROM message WHERE receveur = $1;';
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(receveur) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const { rows } = await pool.query(selectQuery, [receveur]);
-        if (rows.length > 0) {
-            res.status(200).json(rows);
+        const messages = await prisma.message.findMany({
+            where: { receveur }
+        });
+        if (messages.length > 0) {
+            res.status(200).json(messages);
         } else {
             res.status(404).send('Aucun message trouvé pour ce destinataire');
         }
@@ -34,13 +39,18 @@ router.get('/receveur/:receveur', authenticateToken, async (req, res) => {
 });
 
 // Routeur GET pour récupérer des messages basés sur l'émetteur
-router.get('/envoyeur/:envoyeur', async (req, res) => {
+router.get('/envoyeur/:envoyeur', authenticateToken, async (req, res) => {
     const { envoyeur } = req.params;
-    const selectQuery = 'SELECT * FROM message WHERE envoyeur = $1;';
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(envoyeur) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const { rows } = await pool.query(selectQuery, [envoyeur]);
-        if (rows.length > 0) {
-            res.status(200).json(rows);
+        const messages = await prisma.message.findMany({
+            where: { envoyeur }
+        });
+        if (messages.length > 0) {
+            res.status(200).json(messages);
         } else {
             res.status(404).send('Aucun message trouvé pour cet émetteur');
         }
@@ -50,18 +60,23 @@ router.get('/envoyeur/:envoyeur', async (req, res) => {
     }
 });
 
-
 // Routeur POST pour ajouter un nouveau message
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
     const { date, texte, envoyeur, receveur } = req.body;
-    const insertQuery = `
-        INSERT INTO message (date, texte, envoyeur, receveur)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *;
-    `;
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(envoyeur) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const { rows } = await pool.query(insertQuery, [date, texte, envoyeur, receveur]);
-        res.status(201).json(rows[0]);
+        const newMessage = await prisma.message.create({
+            data: {
+                date,
+                texte,
+                envoyeur,
+                receveur
+            }
+        });
+        res.status(201).json(newMessage);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Erreur lors de l\'ajout du message');
@@ -69,19 +84,24 @@ router.post('/', async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un message
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const deleteQuery = 'DELETE FROM message WHERE idmessage = $1;';
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(envoyeur) !== userId) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
-        const { rowCount } = await pool.query(deleteQuery, [id]);
-        if (rowCount > 0) {
-            res.status(200).send('Message supprimé avec succès');
-        } else {
-            res.status(404).send('Aucun message trouvé avec cet ID');
-        }
+        const deleteResult = await prisma.message.delete({
+            where: { idmessage: parseInt(id) }
+        });
+        res.status(200).send('Message supprimé avec succès');
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Erreur lors de la suppression du message');
+        if (err.code === 'P2025') {
+            res.status(404).send('Aucun message trouvé avec cet ID');
+        } else {
+            console.error(err.message);
+            res.status(500).send('Erreur lors de la suppression du message');
+        }
     }
 });
 

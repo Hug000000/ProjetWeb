@@ -1,4 +1,3 @@
-import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import reqUtilisateurs from './requete/reqUtilisateurs.js';
@@ -6,6 +5,7 @@ import reqVoiture from './requete/reqVoiture.js';
 import reqAvis from './requete/reqAvis.js';
 import reqMessage from './requete/reqMessage.js';
 import reqTrajet from './requete/reqTrajet.js';
+import 'dotenv/config';
 
 const app = express();
 app.use(express.json());
