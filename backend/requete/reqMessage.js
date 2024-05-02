@@ -1,7 +1,7 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
-
+import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -84,10 +84,10 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un message
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(envoyeur) !== userId) {
+    if (parseInt(envoyeur) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {

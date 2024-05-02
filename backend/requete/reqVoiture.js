@@ -1,7 +1,8 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
-
+import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
+router.use(verifyTokenAndGetAdminStatus);
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -81,11 +82,11 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Route PUT pour mettre à jour une voiture en fonction de sa plaque d'immatriculation
-router.put('/:plaque', authenticateToken, async (req, res) => {
+router.put('/:plaque',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { marque, modele, couleur, proprietaire } = req.body;
     const { plaque } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId) {
+    if (parseInt(proprietaire) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
@@ -110,10 +111,10 @@ router.put('/:plaque', authenticateToken, async (req, res) => {
 });
 
 // Route DELETE pour supprimer une voiture en fonction de sa plaque d'immatriculation
-router.delete('/:plaque', authenticateToken, async (req, res) => {
+router.delete('/:plaque',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { plaque } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId) {
+    if (parseInt(proprietaire) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {

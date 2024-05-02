@@ -1,7 +1,7 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
-
+import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -79,11 +79,11 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Routeur PUT pour mettre à jour un trajet en fonction de son identifiant
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { villedepart, villearrivee, heuredepart, heurearrivee, prix, conducteur } = req.body;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(conducteur) !== userId) {
+    if (parseInt(conducteur) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
@@ -110,10 +110,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un trajet en fonction de son identifiant
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(conducteur) !== userId) {
+    if (parseInt(conducteur) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {

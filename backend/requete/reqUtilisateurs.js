@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 
 const prisma = new PrismaClient();
 const secretKey = process.env.SECRET_KEY;
-
+router.use(verifyTokenAndGetAdminStatus);
 const router = express.Router();
 const saltRounds = 10; // Coût de traitement de hachage
 
@@ -53,7 +53,7 @@ export function authenticateToken(req, res, next) {
 }
 
 // Middleware pour extraire et vérifier le token JWT du cookie
-const verifyTokenAndGetAdminStatus = async (req, res, next) => {
+export const verifyTokenAndGetAdminStatus = async (req, res, next) => {
     const token = req.cookies.token;
     if (!token) {
         return res.status(401).send('Token absent, authentification requise');
@@ -160,11 +160,11 @@ router.get('/:id/informationsWithPassword', authenticateToken, async (req, res) 
 });
 
 // Routeur PUT pour mettre à jour les informations d'un utilisateur et l'image dans la table Photo
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, verifyTokenAndGetAdminStatus, async (req, res) => {
     const { id } = req.params;
     const { nom, prenom, age, username, numtel, photoimage, motdepasse } = req.body;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(id) !== userId) {
+    if (parseInt(id) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
@@ -212,10 +212,10 @@ router.put('/:id', async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un utilisateur
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, verifyTokenAndGetAdminStatus, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(id) !== userId) {
+    if (parseInt(id) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
@@ -259,7 +259,7 @@ router.get('/my-admin-status', verifyTokenAndGetAdminStatus, (req, res) => {
 });
 
 // Routeur PUT pour mettre à jour estadmin pour un utilisateur spécifique
-router.put('/:id/estadmin', verifyTokenAndGetAdminStatus, async (req, res) => {
+router.put('/:id/estadmin', async (req, res) => {
     const { id } = req.params;
     const { estadmin } = req.body;
     const { tokenadmin } = req.userIsAdmin;

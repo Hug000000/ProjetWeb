@@ -1,7 +1,7 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
-
+import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -20,7 +20,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/emetteur/:emetteur', authenticateToken, async (req, res) => {
     const { emetteur } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId) {
+    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
@@ -41,10 +41,6 @@ router.get('/emetteur/:emetteur', authenticateToken, async (req, res) => {
 // Routeur GET pour récupérer des avis basés sur le destinataire
 router.get('/destinataire/:destinataire', authenticateToken, async (req, res) => {
     const { destinataire } = req.params;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(destinataire) !== userId) {
-        return res.status(403).send('Accès non autorisé');
-    }
     try {
         const avis = await prisma.avis.findMany({
             where: { destinataire }
@@ -63,10 +59,6 @@ router.get('/destinataire/:destinataire', authenticateToken, async (req, res) =>
 // Routeur GET pour obtenir la moyenne des notes reçues par un utilisateur spécifique
 router.get('/moyenne/:destinataire', authenticateToken, async (req, res) => {
     const { destinataire } = req.params;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(destinataire) !== userId) {
-        return res.status(403).send('Accès non autorisé');
-    }
     try {
         const moyenne = await prisma.avis.aggregate({
             where: { destinataire },
@@ -113,8 +105,12 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un avis en fonction de son ID
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { id } = req.params;
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
         const deleteResult = await prisma.avis.delete({
             where: { idavis: parseInt(id) }
@@ -131,11 +127,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // Routeur PUT pour mettre à jour un avis en fonction de son ID
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { note, date, texte, emetteur, destinataire } = req.body;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId) {
+    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
         return res.status(403).send('Accès non autorisé');
     }
     try {
