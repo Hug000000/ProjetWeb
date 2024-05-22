@@ -5,10 +5,17 @@ import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
 const prisma = new PrismaClient();
 const router = express.Router();
 
-// Routeur GET général pour récupérer tous les avis
-router.get('/', authenticateToken, async (req, res) => {
+// Routeur GET pour récupérer des avis basés sur l'émetteur
+router.get('/emetteur/', authenticateToken, async (req, res) => {
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
     try {
-        const avis = await prisma.avis.findMany();
+        const avis = await prisma.avis.findMany({
+            where: {
+                emetteur: {
+                    idutilisateur: parseInt(userId)
+                }
+            }
+        });
         res.status(200).json(avis);
     } catch (err) {
         console.error(err.message);
@@ -16,40 +23,36 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
-// Routeur GET pour récupérer des avis basés sur l'émetteur
-router.get('/emetteur/:emetteur', authenticateToken, async (req, res) => {
-    const { emetteur } = req.params;
+// Routeur GET pour récupérer des avis basés sur le destinataire connecté
+router.get('/destinataire/', authenticateToken, async (req, res) => {
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
-        return res.status(403).send('Accès non autorisé');
-    }
     try {
         const avis = await prisma.avis.findMany({
-            where: { emetteur }
+            where: {
+                destinataire: {
+                    idutilisateur: parseInt(userId)
+                }
+            }
         });
-        if (avis.length > 0) {
-            res.status(200).json(avis);
-        } else {
-            res.status(404).send('Aucun avis trouvé pour cet émetteur');
-        }
+        res.status(200).json(avis);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Erreur lors de la récupération des avis');
     }
 });
 
-// Routeur GET pour récupérer des avis basés sur le destinataire
+// Routeur GET pour récupérer des avis basés sur un destinataire spécifique
 router.get('/destinataire/:destinataire', authenticateToken, async (req, res) => {
     const { destinataire } = req.params;
     try {
         const avis = await prisma.avis.findMany({
-            where: { destinataire }
+            where: {
+                destinataire: {
+                    idutilisateur: parseInt(destinataire)
+                }
+            }
         });
-        if (avis.length > 0) {
-            res.status(200).json(avis);
-        } else {
-            res.status(404).send('Aucun avis trouvé pour ce destinataire');
-        }
+        res.status(200).json(avis);
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Erreur lors de la récupération des avis');
@@ -58,21 +61,46 @@ router.get('/destinataire/:destinataire', authenticateToken, async (req, res) =>
 
 // Routeur GET pour obtenir la moyenne des notes reçues par un utilisateur spécifique
 router.get('/moyenne/:destinataire', authenticateToken, async (req, res) => {
-    const { destinataire } = req.params;
+    const destinataireId = parseInt(req.params.destinataire, 10);
+    if (isNaN(destinataireId)) {
+        return res.status(400).send('L\'ID du destinataire doit être un nombre entier valide');
+    }
+
     try {
+        // Vérifier d'abord si l'utilisateur existe
+        const userExists = await prisma.utilisateur.findUnique({
+            where: {
+                idutilisateur: destinataireId
+            }
+        });
+
+        if (!userExists) {
+            return res.status(404).send('Utilisateur non trouvé');
+        }
+
+        // Calculer la moyenne des notes
         const moyenne = await prisma.avis.aggregate({
-            where: { destinataire },
+            where: {
+                iddestinataire: destinataireId
+            },
             _avg: {
                 note: true
             }
         });
-        if (moyenne._avg.note !== null) {
+
+        if (moyenne._avg.note === null) {
+            // L'utilisateur existe mais n'a pas de notes
             res.status(200).json({
-                utilisateur: destinataire,
-                moyenne: parseFloat(moyenne._avg.note).toFixed(2) // Formate la moyenne avec deux décimales
+                utilisateur: destinataireId,
+                moyenne: -1 // Aucune note trouvée
             });
         } else {
-            res.status(404).send('Aucune note trouvée pour cet utilisateur ou utilisateur inexistant');
+            // L'utilisateur existe et a une moyenne de notes
+            const moyenneNote = parseFloat(moyenne._avg.note).toFixed(2);
+            res.status(200).json({
+                utilisateur: destinataireId,
+                moyenne: moyenneNote
+            });
         }
     } catch (err) {
         console.error(err.message);
@@ -80,23 +108,63 @@ router.get('/moyenne/:destinataire', authenticateToken, async (req, res) => {
     }
 });
 
+// Routeur GET pour vérifier si l'utilisateur connecté a déjà noté un conducteur spécifique
+router.get('/hasRated/:conducteurId', authenticateToken, async (req, res) => {
+    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
+    const { conducteurId } = req.params;
+
+    try {
+        // Recherche d'un avis où l'utilisateur connecté est l'émetteur et le conducteur est le destinataire
+        const existingAvis = await prisma.avis.findFirst({
+            where: {
+                idemetteur: parseInt(userId),
+                iddestinataire: parseInt(conducteurId)
+            }
+        });
+
+        // Si un avis existe, renvoyer true, sinon false
+        const hasRated = !!existingAvis;
+        res.status(200).json({ hasRated });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Erreur lors de la vérification si l\'utilisateur a noté le conducteur');
+    }
+});
+
+
 // Routeur POST pour ajouter un nouvel avis
 router.post('/', authenticateToken, async (req, res) => {
-    const { note, date, texte, emetteur, destinataire } = req.body;
+    const { note, date, texte, destinataire } = req.body;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId) {
-        return res.status(403).send('Accès non autorisé');
-    }
+
     try {
+        // Vérification que l'émetteur et le destinataire ne sont pas les mêmes
+        if (parseInt(userId) === parseInt(destinataire)) {
+            return res.status(400).json({ error: "L'émetteur et le destinataire ne peuvent pas être les mêmes." });
+        }
+
+        // Vérification de l'existence d'un avis pour ce couple emetteur/destinataire
+        const existingAvis = await prisma.avis.findFirst({
+            where: {
+                emetteur: { idutilisateur: parseInt(userId) },
+                destinataire: { idutilisateur: parseInt(destinataire) }
+            }
+        });
+
+        if (existingAvis) {
+            return res.status(400).json({ error: "Un avis existe déjà pour ce destinataire et cet utilisateur." });
+        }
+
         const nouvelAvis = await prisma.avis.create({
             data: {
                 note,
                 date,
                 texte,
-                emetteur,
-                destinataire
+                emetteur: { connect: { idutilisateur: parseInt(userId) } },
+                destinataire: { connect: { idutilisateur: parseInt(destinataire) } }
             }
         });
+
         res.status(201).json(nouvelAvis);
     } catch (err) {
         console.error(err.message);
@@ -105,54 +173,30 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Routeur DELETE pour supprimer un avis en fonction de son ID
-router.delete('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
-        return res.status(403).send('Accès non autorisé');
-    }
     try {
-        const deleteResult = await prisma.avis.delete({
+        const avis = await prisma.avis.findUnique({
             where: { idavis: parseInt(id) }
         });
+
+        if (!avis) {
+            return res.status(404).send('Aucun avis trouvé avec cet ID');
+        }
+
+        if (avis.idemetteur !== userId) {
+            return res.status(403).send('Accès non autorisé');
+        }
+
+        await prisma.avis.delete({
+            where: { idavis: parseInt(id) }
+        });
+
         res.status(200).send('Avis supprimé avec succès');
     } catch (err) {
-        if (err.code === 'P2025') {
-            res.status(404).send('Aucun avis trouvé avec cet ID');
-        } else {
-            console.error(err.message);
-            res.status(500).send('Erreur lors de la suppression de l\'avis');
-        }
-    }
-});
-
-// Routeur PUT pour mettre à jour un avis en fonction de son ID
-router.put('/:id',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
-    const { id } = req.params;
-    const { note, date, texte, emetteur, destinataire } = req.body;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(emetteur) !== userId && !req.userIsAdmin) {
-        return res.status(403).send('Accès non autorisé');
-    }
-    try {
-        const avisUpdated = await prisma.avis.update({
-            where: { idavis: parseInt(id) },
-            data: {
-                note,
-                date,
-                texte,
-                emetteur,
-                destinataire
-            }
-        });
-        res.status(200).json(avisUpdated);
-    } catch (err) {
-        if (err.code === 'P2025') {
-            res.status(404).send('Aucun avis trouvé avec cet ID');
-        } else {
-            console.error(err.message);
-            res.status(500).send('Erreur lors de la mise à jour de l\'avis');
-        }
+        console.error(err.message);
+        res.status(500).send('Erreur lors de la suppression de l\'avis');
     }
 });
 

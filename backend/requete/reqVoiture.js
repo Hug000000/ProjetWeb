@@ -2,12 +2,14 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from './reqUtilisateurs.js';
 import { verifyTokenAndGetAdminStatus } from './reqUtilisateurs.js';
-router.use(verifyTokenAndGetAdminStatus);
 const prisma = new PrismaClient();
 const router = express.Router();
 
 // GET: Récupérer toutes les voitures
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', verifyTokenAndGetAdminStatus, async (req, res) => {
+    if (!req.userIsAdmin) {
+        return res.status(403).send('Accès non autorisé');
+    }
     try {
         const voitures = await prisma.voiture.findMany();
         res.status(200).json(voitures);
@@ -17,27 +19,27 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
-// GET: Récupérer toutes les voitures d'un propriétaire spécifique
-router.get('/par-proprietaire/:proprietaireId', authenticateToken, async (req, res) => {
-    const { proprietaireId } = req.params;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId) {
-        return res.status(403).send('Accès non autorisé');
+// GET: Récupérer toutes les voitures de l'utilisateur
+router.get('/par-proprietaire', authenticateToken, async (req, res) => {
+    const { userId } = req.decoded;
+  
+    if (!userId) {
+      return res.status(403).send('Accès non autorisé.');
     }
+  
     try {
-        const voitures = await prisma.voiture.findMany({
-            where: { proprietaire: proprietaireId }
-        });
-        if (voitures.length > 0) {
-            res.status(200).json(voitures);
-        } else {
-            res.status(404).send('Aucune voiture trouvée pour ce propriétaire');
-        }
+      // Récupérer toutes les voitures en filtrant par `idProprietaire`
+      const voitures = await prisma.voiture.findMany({
+        where: { idProprietaire: userId },
+      });
+  
+      // Retourner toujours un tableau, même vide
+      res.status(200).json(voitures);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Erreur lors de la récupération des voitures du propriétaire');
+      console.error('Erreur lors de la récupération des voitures du propriétaire:', err.message);
+      res.status(500).send('Erreur lors de la récupération des voitures du propriétaire.');
     }
-});
+  });  
 
 // GET: Récupérer une voiture spécifique par la plaque d'immatriculation
 router.get('/:plaque', authenticateToken, async (req, res) => {
@@ -59,77 +61,99 @@ router.get('/:plaque', authenticateToken, async (req, res) => {
 
 // POST: Ajouter une nouvelle voiture
 router.post('/', authenticateToken, async (req, res) => {
-    const { marque, modele, couleur, plaqueimat, proprietaire } = req.body;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId) {
-        return res.status(403).send('Accès non autorisé');
+    const { marque, modele, couleur, plaqueimat } = req.body;
+    const { userId } = req.decoded;
+    if (!userId) {
+      return res.status(403).send('Accès non autorisé.');
     }
     try {
-        const nouvelleVoiture = await prisma.voiture.create({
-            data: {
-                marque,
-                modele,
-                couleur,
-                plaqueimat,
-                proprietaire
-            }
-        });
-        res.status(201).json(nouvelleVoiture);
+      // Créer la nouvelle voiture dans la base de données
+      const nouvelleVoiture = await prisma.voiture.create({
+        data: {
+          marque,
+          modele,
+          couleur,
+          plaqueimat,
+          proprietaire: {
+            connect: { idutilisateur: userId } // Relie l'utilisateur en utilisant `connect`
+          }
+        }
+      });
+      res.status(201).json(nouvelleVoiture);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Erreur lors de l\'ajout de la voiture');
+      console.error(err.message);
+      res.status(500).send("Erreur lors de l'ajout de la voiture.");
     }
-});
+  });
+  
+  
 
 // Route PUT pour mettre à jour une voiture en fonction de sa plaque d'immatriculation
-router.put('/:plaque',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
-    const { marque, modele, couleur, proprietaire } = req.body;
+router.put('/:plaque', authenticateToken, async (req, res) => {
+    const { marque, modele, couleur } = req.body;
     const { plaque } = req.params;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId && !req.userIsAdmin) {
-        return res.status(403).send('Accès non autorisé');
-    }
+    const { userId } = req.decoded;
+  
     try {
-        const voitureUpdated = await prisma.voiture.update({
-            where: { plaqueimat: plaque },
-            data: {
-                marque,
-                modele,
-                couleur,
-                proprietaire
-            }
-        });
-        res.status(200).json(voitureUpdated);
+      // Vérifiez que la voiture appartient à l'utilisateur connecté
+      const voiture = await prisma.voiture.findUnique({
+        where: { plaqueimat: plaque },
+      });
+  
+      if (!voiture || voiture.idProprietaire !== userId) {
+        return res.status(403).send('Accès non autorisé.');
+      }
+  
+      // Mettez à jour la voiture
+      const voitureUpdated = await prisma.voiture.update({
+        where: { plaqueimat: plaque },
+        data: {
+          marque,
+          modele,
+          couleur,
+        },
+      });
+  
+      res.status(200).json(voitureUpdated);
     } catch (err) {
-        if (err.code === 'P2025') {
-            res.status(404).send('Aucune voiture trouvée avec cette plaque d\'immatriculation');
-        } else {
-            console.error(err.message);
-            res.status(500).send('Erreur lors de la mise à jour de la voiture');
-        }
+      if (err.code === 'P2025') {
+        res.status(404).send('Aucune voiture trouvée avec cette plaque d\'immatriculation.');
+      } else {
+        console.error(err.message);
+        res.status(500).send('Erreur lors de la mise à jour de la voiture.');
+      }
     }
 });
-
+  
 // Route DELETE pour supprimer une voiture en fonction de sa plaque d'immatriculation
-router.delete('/:plaque',verifyTokenAndGetAdminStatus, authenticateToken, async (req, res) => {
+router.delete('/:plaque', authenticateToken, async (req, res) => {
     const { plaque } = req.params;
-    const { userId } = req.decoded; // Identifiant d'utilisateur extrait du token JWT
-    if (parseInt(proprietaire) !== userId && !req.userIsAdmin) {
-        return res.status(403).send('Accès non autorisé');
-    }
+    const { userId } = req.decoded;
+  
     try {
-        const deleteResponse = await prisma.voiture.delete({
-            where: { plaqueimat: plaque }
-        });
-        res.status(200).send('Voiture supprimée avec succès');
+      // Vérifiez que la voiture appartient à l'utilisateur connecté
+      const voiture = await prisma.voiture.findUnique({
+        where: { plaqueimat: plaque },
+      });
+  
+      if (!voiture || voiture.idProprietaire !== userId) {
+        return res.status(403).send('Accès non autorisé.');
+      }
+  
+      // Supprimez la voiture
+      await prisma.voiture.delete({
+        where: { plaqueimat: plaque },
+      });
+  
+      res.status(200).send('Voiture supprimée avec succès.');
     } catch (err) {
-        if (err.code === 'P2025') {
-            res.status(404).send('Aucune voiture trouvée avec cette plaque d\'immatriculation');
-        } else {
-            console.error(err.message);
-            res.status(500).send('Erreur lors de la suppression de la voiture');
-        }
+      if (err.code === 'P2025') {
+        res.status(404).send('Aucune voiture trouvée avec cette plaque d\'immatriculation.');
+      } else {
+        console.error(err.message);
+        res.status(500).send('Erreur lors de la suppression de la voiture.');
+      }
     }
-});
+});  
 
 export default router;
