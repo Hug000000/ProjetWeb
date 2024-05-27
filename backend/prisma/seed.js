@@ -120,7 +120,7 @@ async function main() {
   }
 
   // Lire et encoder l'image en base64
-  const imagePath = path.resolve(__dirname, 'pdp.jpg'); // Ajuster ce chemin si nécessaire
+  const imagePath = path.resolve(__dirname, 'pdp.jpg');
 
   let imageBase64;
   try {
@@ -134,10 +134,28 @@ async function main() {
   // Ajout des utilisateurs
   const users = [
     {
-      nom: 'Test',
+      nom: 'Test1',
       prenom: 'User',
       age: 30,
-      username: 'testuser',
+      username: 'testuser1',
+      numtel: '1234567890',
+      motdepasse: 'test',
+      estadmin: false
+    },
+    {
+      nom: 'Test2',
+      prenom: 'User',
+      age: 30,
+      username: 'testuser2',
+      numtel: '1234567890',
+      motdepasse: 'test',
+      estadmin: false
+    },
+    {
+      nom: 'Test3',
+      prenom: 'User',
+      age: 30,
+      username: 'testuser3',
       numtel: '1234567890',
       motdepasse: 'test',
       estadmin: false
@@ -172,12 +190,12 @@ async function main() {
         numtel: user.numtel,
         motdepasse: hashedPassword,
         estadmin: user.estadmin,
-        photoprofil: createdPhoto.idphoto // Associe l'ID de la photo à l'utilisateur
+        photoprofil: createdPhoto.idphoto
       }
     });
   }
 
-  console.log("Villes et utilisateurs ajoutés avec succès!");
+  //console.log("Villes et utilisateurs ajoutés avec succès!");
 }
 
 main()
